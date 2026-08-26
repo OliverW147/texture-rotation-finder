@@ -12,7 +12,7 @@ echo Done: tex_match.exe
 REM GPU version (requires CUDA + MSVC)
 where nvcc >nul 2>&1
 if errorlevel 1 (
-    echo nvcc not found -- skipping GPU build
+    echo nvcc not found - skipping GPU build
     goto :eof
 )
 

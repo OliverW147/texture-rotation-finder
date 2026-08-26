@@ -21,7 +21,7 @@ BLOCK_LIST_TEXT = """\
 Supported blocks (mod=4 unless noted):
   grass_block        dirt           sand
   netherrack  (mod=16: fully random orientation; one face
-    read narrows it to 4 of 16 variants -- enter those as
+    read narrows it to 4 of 16 variants - enter those as
     a MASK observation, see below; 2 bits/obs like mod=4)
   red_sand           podzol         mycelium
   dirt_path          rooted_dirt    lily_pad
@@ -259,7 +259,7 @@ class App(tk.Tk):
              "  N closest matches are confirmed (huge speedup if you trust your\n"
              "  centre guess).\n"
              "  Default Y range is just Centre Y (single level). Set Y Min/Max to search a range.\n"
-             "  The search is seed-independent -- works on any world.\n"
+             "  The search is seed-independent - works on any world.\n"
              "Direction modes (pick one in the Direction dropdown):\n"
              "  Anchored (facing 0-3): your rot values are used EXACTLY as entered;\n"
              "    the chosen facing only rotates the (dx,dz) offset pattern by\n"
@@ -279,7 +279,7 @@ class App(tk.Tk):
              "  string here with 'Try all 4 directions' enabled. Handles uneven\n"
              "  terrain (dy search), grass/dirt/sand/podzol/mycelium/dirt_path tops\n"
              "  and bottoms, stone-family tops and sides, and netherrack (mask obs).\n\n"
-             "  The rot value is a painted digit from the pack -- the digit rotates with\n"
+             "  The rot value is a painted digit from the pack - the digit rotates with\n"
              "  the BLOCK, not your camera, so its value reads the same from any view\n"
              "  direction (a rot-2 stone shows an upside-down '2' from the south, still\n"
              "  a 2). Only your dx/dz offsets are view-relative; the search rotates those\n"
@@ -680,7 +680,7 @@ class App(tk.Tk):
                         self.after(0, lambda l=line: self._log(l, tag="match"))
                     elif match_count == MATCH_DISPLAY_LIMIT:
                         self.after(0, lambda: self._log(
-                            f"[Display capped at {MATCH_DISPLAY_LIMIT} matches -- see matches.txt for full results]\n",
+                            f"[Display capped at {MATCH_DISPLAY_LIMIT} matches - see matches.txt for full results]\n",
                             tag="err"))
                     match_count += 1
 

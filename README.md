@@ -5,11 +5,12 @@ blocks around you.
 
 Many blocks (grass, sand, stone, netherrack, concrete powder, ...) pick their
 texture variant from a hash of their absolute position. That hash depends only
-on `(x, y, z)` -- not on the world seed. So a handful of observed rotations
+on `(x, y, z)` - not on the world seed. So a handful of observed rotations
 pins down where you are, on any server, without knowing the seed.
 
-Reading ~12 blocks is usually enough to get a unique hit inside a 10k x 10k
-region. The GPU matcher scans about **150 billion candidate positions per
+Reading about 20 blocks pins you down inside a 10k x 10k region, and about 33
+blocks does it across the entire world (both 95% confidence, full y range of
+-64 to 320). The GPU matcher scans about **150 billion candidate positions per
 second** on an RTX 4060.
 
 ## Contents
@@ -30,7 +31,7 @@ needs the **CUDA Toolkit** and **Visual Studio 2019-2022** (nvcc's host compiler
 build_tex.bat
 ```
 
-The GPU step is skipped automatically if `nvcc` is not on PATH -- the GUI still
+The GPU step is skipped automatically if `nvcc` is not on PATH - the GUI still
 works, CPU-only.
 
 The build produces a fatbin with native code for Turing (`sm_75`, RTX 20xx /
@@ -61,10 +62,10 @@ One per line, relative to any block you pick as the origin:
 dx,dy,dz,rot,mod[,modeff]
 ```
 
-- `dx,dy,dz` -- offset from your reference block
-- `rot` -- the variant you observed
-- `mod` -- number of variants the block has (4 for most, 16 for netherrack)
-- `modeff` -- optional; use `2` on mod-4 blocks where you can only tell
+- `dx,dy,dz` - offset from your reference block
+- `rot` - the variant you observed
+- `mod` - number of variants the block has (4 for most, 16 for netherrack)
+- `modeff` - optional; use `2` on mod-4 blocks where you can only tell
   *normal* from *mirrored* (stone, bedrock, deepslate, sculk) rather than the
   full rotation
 
@@ -101,10 +102,10 @@ which is much faster when you only want the closest hit.
 
 The search is split into two kernels:
 
-1. **Field kernel** -- computes the rotation value once per absolute cell and
+1. **Field kernel** - computes the rotation value once per absolute cell and
    packs it into a bitfield (16-32 cells per 64-bit word). Each cell is hashed
    exactly once, which is the information-theoretic minimum.
-2. **Sieve kernel** -- matches candidates as shifted 64-bit AND masks over that
+2. **Sieve kernel** - matches candidates as shifted 64-bit AND masks over that
    field. One `xor`/`and`/`fold` tests **32 candidates at once**, and a word
    drops out as soon as every candidate in it is dead.
 
@@ -113,16 +114,19 @@ per-candidate branch. Tiles are processed in expanding rings from the search
 centre so near matches surface first.
 
 Because a word drops out after about three observations on average, throughput
-barely moves with the size of the observation set. Measured on an RTX 4060,
-one facing:
+barely moves with the size of the observation set. Billions of candidate
+positions per second on an RTX 4060:
 
 | observations | 12 | 20 | 30 | 45 | 57 |
 |---|---|---|---|---|---|
-| G candidates/s | 150 | 153 | 153 | 153 | 154 |
+| known direction | 150 | 154 | 149 | 154 | 153 |
+| unknown, 4 rotations (`--facing all4`) | 338 | 358 | 354 | 356 | 374 |
+| unknown, 8 transforms (`--facing all`) | 428 | 460 | 423 | 466 | 468 |
 
-Searching all 8 facings is *cheaper per candidate*, not more expensive, because
-the field is built once and reused by every transform: ~415 G candidates/s with
-12 observations.
+Searching an unknown direction is *cheaper per candidate*, not more expensive:
+the field is built once and every transform reuses it, so the one-off hashing
+cost is amortised over 4 or 8 times as many candidates. Wall-clock time still
+goes up, just sub-linearly.
 
 ## Version
 
@@ -131,4 +135,4 @@ same coordinate hash but different blockstate variant lists.
 
 ## Licence
 
-MIT -- see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
