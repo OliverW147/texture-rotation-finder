@@ -1,0 +1,19 @@
+# Build artifacts (the two matcher binaries ARE committed; see README)
+*.obj
+*.exp
+*.lib
+*.pdb
+*.o
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Matcher output
+matches.txt
