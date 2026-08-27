@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
+from tkinter import ttk, scrolledtext, messagebox, filedialog
 import subprocess
 import threading
 import os
@@ -7,6 +7,8 @@ import sys
 import multiprocessing
 import math
 import time
+
+import tex_conf
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXE_CPU = os.path.join(SCRIPT_DIR, "tex_match.exe")
@@ -51,6 +53,21 @@ Mask form:  dx,dy,dz,mHEX,mod
   (separate screenshot tool) for netherrack reads; works on CPU
   and GPU and with try-all-4-directions.\
 """
+
+# Default observation set: 47 reads that resolve to a single match at
+# (10027, -10, -9916) within radius 15000, Y -60..0, anchored facing 0.
+# Mostly modeff=2 side reads off a stone-family wall, plus a few mod=4 tops.
+DEFAULT_OBS = (
+    "-1,-1,0,3,4 -3,-1,0,3,4 -2,-1,0,3,4 1,-2,-1,1,4 2,-1,-1,1,4 0,5,0,0,4 "
+    "0,0,0,3,4 3,5,-1,3,4 3,-2,-2,1,4 4,-1,-2,1,4,2 -5,2,1,0,4,2 -5,1,1,0,4,2 "
+    "4,0,-2,0,4 -4,4,1,0,4,2 -4,3,1,0,4,2 -4,1,1,0,4,2 -2,5,1,0,4,2 "
+    "-3,0,1,0,4,2 -4,2,1,0,4,2 -2,4,1,0,4,2 2,-1,-1,1,4,2 -2,2,1,1,4,2 "
+    "-2,3,1,0,4,2 -1,0,1,0,4,2 0,0,0,1,4,2 1,4,0,1,4,2 -3,3,1,0,4,2 "
+    "0,2,1,0,4,2 1,2,0,1,4,2 -2,1,1,1,4,2 2,3,0,1,4,2 0,-1,0,1,4,2 "
+    "2,2,0,0,4,2 -1,4,1,1,4,2 -2,0,1,1,4,2 1,1,0,0,4,2 5,3,-1,1,4,2 "
+    "-3,1,1,1,4,2 -1,3,1,1,4,2 -3,2,1,1,4,2 2,4,0,0,4,2 0,4,1,1,4,2 "
+    "2,0,0,1,4,2 2,1,0,0,4,2 3,1,-1,0,4,2 1,3,0,0,4,2 -1,-1,0,1,4,2"
+)
 
 # ---------------------------------------------------------------------------
 # How many observations give p50 / p95 / p99 probability of a unique result
@@ -132,7 +149,7 @@ class App(tk.Tk):
 
         ttk.Label(top, text="Search Radius (blocks):").grid(row=2, column=0, sticky="e", **pad)
         self.radius = ttk.Entry(top, width=14)
-        self.radius.insert(0, "5000")
+        self.radius.insert(0, "15000")
         self.radius.grid(row=2, column=1, sticky="w", **pad)
         self.radius.bind("<FocusOut>",  lambda e: self._update_rec_obs())
         self.radius.bind("<Return>",    lambda e: self._update_rec_obs())
@@ -140,14 +157,14 @@ class App(tk.Tk):
 
         ttk.Label(top, text="Y Min:").grid(row=3, column=0, sticky="e", **pad)
         self.ymin = ttk.Entry(top, width=14)
-        self.ymin.insert(0, "62")
+        self.ymin.insert(0, "-60")
         self.ymin.grid(row=3, column=1, sticky="w", **pad)
         self.ymin.bind("<FocusOut>",   lambda e: self._update_rec_obs())
         self.ymin.bind("<KeyRelease>", lambda e: self._update_rec_obs())
 
         ttk.Label(top, text="Y Max:").grid(row=4, column=0, sticky="e", **pad)
         self.ymax = ttk.Entry(top, width=14)
-        self.ymax.insert(0, "100")
+        self.ymax.insert(0, "0")
         self.ymax.grid(row=4, column=1, sticky="w", **pad)
         self.ymax.bind("<FocusOut>",   lambda e: self._update_rec_obs())
         self.ymax.bind("<KeyRelease>", lambda e: self._update_rec_obs())
@@ -169,34 +186,37 @@ class App(tk.Tk):
         # camera directions, rotating offsets AND shifting rot in lockstep.
         # mod=4 blocks (and mod=16 mask obs) only; ~2x slower on GPU.
         #
-        # FACING_MODES: ordered (key, label, facing_arg, view_relative, n_facings).
-        # View-relative facing 0 is omitted: it equals anchored facing 0
-        # (zero rot shift), so it would be a duplicate.
-        self.FACING_MODES = [
-            ("anchor0",   "As entered, facing known (anchored, facing 0)",      "0",    False, 1),
-            ("anchor1",   "Anchored: rotate offsets 90 deg CCW (facing 1)",     "1",    False, 1),
-            ("anchor2",   "Anchored: rotate offsets 180 deg (facing 2)",        "2",    False, 1),
-            ("anchor3",   "Anchored: rotate offsets 270 deg CCW (facing 3)",    "3",    False, 1),
-            ("anchorall", "Anchored: try all 4 offset rotations (rot fixed)",   "all4", False, 4),
-            ("vr1",       "View-relative: camera turned 90 deg CW (facing 1)",  "1",    True,  1),
-            ("vr2",       "View-relative: camera turned 180 deg (facing 2)",    "2",    True,  1),
-            ("vr3",       "View-relative: camera turned 270 deg CW (facing 3)", "3",    True,  1),
-            ("vrall",     "Try all 4 directions (view-relative, dir unknown)",  "all4", True,  4),
+        # One checkbox per facing, so any subset can be searched (tex_match
+        # accepts arbitrary --facing lists, e.g. "0,2", not just one or all4).
+        # A .conf's `directions = [0, 90]` maps straight onto ticking 0 and 1.
+        #   facing 0 = offsets as entered, 1 = 90 CCW, 2 = 180, 3 = 270 CCW.
+        self.FACING_LABELS = [
+            (0, "0: as entered"),
+            (1, "1: 90 deg CCW"),
+            (2, "2: 180 deg"),
+            (3, "3: 270 deg CCW"),
         ]
-        self._facing_by_label = {lbl: (key, fa, vr, nf)
-                                 for key, lbl, fa, vr, nf in self.FACING_MODES}
+        self.facing_vars = {}
+        check_row = ttk.Frame(facing_outer)
+        check_row.pack(anchor="w")
+        for i, (idx, label) in enumerate(self.FACING_LABELS):
+            var = tk.BooleanVar(value=(idx == 0))
+            self.facing_vars[idx] = var
+            ttk.Checkbutton(check_row, text=label, variable=var,
+                            command=self._update_rec_obs).grid(
+                                row=i // 2, column=i % 2, sticky="w", padx=(0, 10))
 
-        self.facing_choice = tk.StringVar(value=self.FACING_MODES[0][1])
-        self.facing_combo = ttk.Combobox(
-            facing_outer, textvariable=self.facing_choice, state="readonly",
-            width=46, values=[lbl for _, lbl, *_ in self.FACING_MODES])
-        self.facing_combo.pack(anchor="w")
-        self.facing_combo.bind("<<ComboboxSelected>>",
-                               lambda e: self._update_rec_obs())
+        self.view_rel_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            facing_outer,
+            text="View-relative (rot read relative to an unknown camera yaw)",
+            variable=self.view_rel_var,
+            command=self._update_rec_obs).pack(anchor="w", pady=(2, 0))
 
         ttk.Label(facing_outer,
-            text="View-relative tries all 4 camera directions (~2x slower on\n"
-                 "GPU); anchored modes use your rot values as entered.",
+            text="Tick every facing to try. Anchored (unticked) uses your rot\n"
+                 "values as entered and only rotates the dx,dz offsets.\n"
+                 "View-relative also shifts rot in lockstep; mod=4 obs only.",
             font=("Consolas", 8), foreground="#666666",
             justify="left").pack(anchor="w", pady=(2, 0))
 
@@ -259,27 +279,52 @@ class App(tk.Tk):
              "  N closest matches are confirmed (huge speedup if you trust your\n"
              "  centre guess).\n"
              "  Default Y range is just Centre Y (single level). Set Y Min/Max to search a range.\n"
-             "  The search is seed-independent - works on any world.\n"
-             "Direction modes (pick one in the Direction dropdown):\n"
-             "  Anchored (facing 0-3): your rot values are used EXACTLY as entered;\n"
-             "    the chosen facing only rotates the (dx,dz) offset pattern by\n"
-             "    facing*90 (0 = as entered, 1 = 90 CCW, 2 = 180, 3 = 270 CCW).\n"
-             "    Use when you know which way you were facing. Any mod allowed.\n"
-             "  Anchored: try all 4 offset rotations: runs facings 0-3 at once with\n"
-             "    rot fixed; useful if the offset orientation (not rot) is uncertain.\n"
-             "  View-relative (facing 1-3): rot was read relative to the camera; the\n"
-             "    search shifts rot in lockstep with the offset rotation (facing=f =\n"
-             "    camera turned CW by f). mod=4 blocks / mod=16 mask obs only.\n"
-             "  Try all 4 directions (view-relative): direction unknown. Tries all 4\n"
-             "    camera directions the same way. ~2x slower on GPU.\n"
-             "    (View-relative facing 0 is omitted: it equals anchored facing 0.)\n\n"
-             "Screenshot extractor (separate tool, not bundled here):\n"
+             "  The search is seed-independent -- works on any world.\n"
+             "Direction (tick every facing you want searched):\n"
+             "  Facing f rotates the (dx,dz) offset pattern by f*90:\n"
+             "    0 = as entered, 1 = 90 CCW, 2 = 180, 3 = 270 CCW.\n"
+             "  Tick one when you know which way you were facing, or several when\n"
+             "  you do not. Any subset works, so 0 and 2 alone is fine if you know\n"
+             "  you were on one axis but not which end. Each extra facing costs\n"
+             "  roughly one more pass, so 4 ticked is about 4x one ticked.\n"
+             "  View-relative OFF (anchored): rot is used EXACTLY as entered and\n"
+             "    only the offsets rotate. Use when your rot values are already in\n"
+             "    world terms, e.g. read in-game against a known reference block.\n"
+             "    Any mod allowed.\n"
+             "  View-relative ON: rot was read relative to the camera, so the search\n"
+             "    shifts rot in lockstep with the offsets (facing f also adds f to\n"
+             "    every rot). Use for screenshot-extractor output when the camera\n"
+             "    direction is unknown. mod=4 blocks / mod=16 mask obs only.\n"
+             "  The two are different searches, not orderings: the same observations\n"
+             "  yield different matches under each, so pick the one that matches how\n"
+             "  you actually read the rotations.\n\n"
+             "Loading .conf files:\n"
+             "  The .conf format comes from CoordsFinder by ALaggyDev:\n"
+             "    https://github.com/ALaggyDev/CoordsFinder\n"
+             "  If you already have observations saved in one, they can be loaded\n"
+             "  here rather than retyped.\n"
+             "  'Load .conf...' picks a file; 'Load latest .conf' takes the most\n"
+             "  recently modified one from this folder. Either fills in the centre,\n"
+             "  radius, Y range, facings and observations, then waits for you to\n"
+             "  press Run. directions = [0, 90] ticks facings 0 and 1, anchored,\n"
+             "  since a conf records rot in world terms. A 'x y z | variant side'\n"
+             "  row becomes modeff=2: the side marker narrows four variants to two,\n"
+             "  which is what modeff=2 expresses.\n"
+             "  Files using algorithm = Vanilla-3 are read. The other algorithms\n"
+             "  select different hash functions that this tool does not implement,\n"
+             "  so those files are declined. Settings with no equivalent here are\n"
+             "  skipped and listed in the log: errorTolerance (this search is\n"
+             "  exact), the tile sizes, and scanOrder, since the search always\n"
+             "  runs nearest-first from the centre and sizes its own tiles.\n"
+             "  A non-square xRange/zRange box is covered by the smallest centred\n"
+             "  square, so matches slightly outside the box can appear.\n\n"
+             "Screenshot extractor (separate screenshot tool):\n"
              "  Reads observations straight off a screenshot: click the crosshair and\n"
              "  the 4 corners of one block top face, scan, then paste the generated\n"
              "  string here with 'Try all 4 directions' enabled. Handles uneven\n"
              "  terrain (dy search), grass/dirt/sand/podzol/mycelium/dirt_path tops\n"
              "  and bottoms, stone-family tops and sides, and netherrack (mask obs).\n\n"
-             "  The rot value is a painted digit from the pack - the digit rotates with\n"
+             "  The rot value is a painted digit from the pack -- the digit rotates with\n"
              "  the BLOCK, not your camera, so its value reads the same from any view\n"
              "  direction (a rot-2 stone shows an upside-down '2' from the south, still\n"
              "  a 2). Only your dx/dz offsets are view-relative; the search rotates those\n"
@@ -294,8 +339,7 @@ class App(tk.Tk):
 
         self.offsets = tk.Text(mid, height=7, width=40, font=("Consolas", 10))
         self.offsets.bind("<KeyRelease>", lambda e: self._update_rec_obs())
-        self.offsets.insert("1.0",
-            "0,0,1,0,4\n1,0,0,0,4\n2,0,0,0,4\n3,0,0,0,4\n4,0,1,0,4\n1,0,4,0,4\n3,0,4,0,4")
+        self.offsets.insert("1.0", DEFAULT_OBS)
         self.offsets.pack(fill="both", expand=True, padx=6, pady=4)
 
         # --- Recommended observations hint ---
@@ -311,6 +355,16 @@ class App(tk.Tk):
         self.stop_btn.pack(side="left", padx=4)
         ttk.Button(btn_row, text="Clear Output", command=self._clear).pack(side="left", padx=4)
 
+        # --- .conf import (CoordsFinder-style scan files) ---
+        conf_row = ttk.Frame(left)
+        conf_row.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(conf_row, text="Load .conf...",
+                   command=self._load_conf_dialog).pack(side="left", padx=4)
+        ttk.Button(conf_row, text="Load latest .conf",
+                   command=self._load_conf_latest).pack(side="left", padx=4)
+        ttk.Label(conf_row, text="(fills the fields above; press Run to search)",
+                  font=("Consolas", 8), foreground="#666666").pack(side="left", padx=(6, 0))
+
         # --- Output (right column, takes the vertical space) ---
         out = ttk.LabelFrame(right, text="Output")
         out.pack(fill="both", expand=True, **pad)
@@ -319,6 +373,9 @@ class App(tk.Tk):
         self.output.pack(fill="both", expand=True, padx=4, pady=4)
         self.output.tag_config("match", foreground="#00aa00", font=("Consolas", 9, "bold"))
         self.output.tag_config("err",   foreground="#cc0000")
+        # warnings that change what the search does (ignored errorTolerance, a
+        # non-square box) must not be lost among the benign "ignored" lines
+        self.output.tag_config("warn",  foreground="#cc0000", font=("Consolas", 9, "bold"))
 
         # --- Status ---
         status_frame = ttk.Frame(self)
@@ -330,9 +387,28 @@ class App(tk.Tk):
         self.progress_bar.pack(side="right", padx=4, fill="x", expand=True)
 
     def _facing_selection(self):
-        # Resolve the current dropdown label to (key, facing_arg, view_rel, n_facings).
-        return self._facing_by_label.get(
-            self.facing_choice.get(), ("anchor0", "0", False, 1))
+        """Resolve the facing checkboxes to (key, facing_arg, view_rel, n_facings).
+
+        Returns the ticked indices as a comma-separated --facing list, or
+        "all4" when every box is ticked. With nothing ticked the caller
+        (_parse_args) reports it; the value here keeps the hint label sane.
+        """
+        picked = [i for i, var in self.facing_vars.items() if var.get()]
+        picked.sort()
+        view_rel = self.view_rel_var.get()
+        if not picked:
+            return ("none", "", view_rel, 1)
+        facing_arg = "all4" if len(picked) == 4 else ",".join(str(i) for i in picked)
+        key = ("vr" if view_rel else "anchor") + facing_arg.replace(",", "")
+        return (key, facing_arg, view_rel, len(picked))
+
+    def set_facings(self, indices, view_rel=False):
+        """Tick exactly `indices` (0-3) and set the view-relative box."""
+        wanted = set(indices)
+        for idx, var in self.facing_vars.items():
+            var.set(idx in wanted)
+        self.view_rel_var.set(view_rel)
+        self._update_rec_obs()
 
     def _update_rec_obs(self):
         try:
@@ -465,6 +541,73 @@ class App(tk.Tk):
         win.bind("<Destroy>",
                  lambda e: canvas.unbind_all("<MouseWheel>") if e.widget is win else None)
 
+    # -- .conf import ------------------------------------------------------
+
+    def _load_conf_dialog(self):
+        path = filedialog.askopenfilename(
+            title="Load CoordsFinder .conf",
+            initialdir=SCRIPT_DIR,
+            filetypes=[("CoordsFinder scan files", "*.conf"), ("All files", "*.*")])
+        if path:
+            self._load_conf(path)
+
+    def _load_conf_latest(self):
+        path = tex_conf.find_latest(SCRIPT_DIR)
+        if not path:
+            messagebox.showinfo(
+                "No .conf found",
+                f"No .conf files in:\n{SCRIPT_DIR}\n\n"
+                "Use 'Load .conf...' to pick one from elsewhere.")
+            return
+        self._load_conf(path)
+
+    def _load_conf(self, path):
+        """Parse a .conf and fill the form. Never starts a search: the values
+        land in the fields so they can be checked (and edited) before Run."""
+        try:
+            scan = tex_conf.parse(path)
+        except tex_conf.ConfError as e:
+            messagebox.showerror("Cannot load .conf", str(e))
+            self._log(f"\n[conf] {os.path.basename(path)}: refused\n", "err")
+            self._log(f"{e}\n", "err")
+            return
+        except OSError as e:
+            messagebox.showerror("Cannot read file", str(e))
+            return
+
+        cx, cz, radius = scan.centre_radius()
+        y_lo, y_hi = scan.y_range
+
+        for entry, value in ((self.cx, cx), (self.cz, cz), (self.radius, radius),
+                             (self.ymin, y_lo), (self.ymax, y_hi)):
+            entry.delete(0, "end")
+            entry.insert(0, str(value))
+
+        self.offsets.delete("1.0", "end")
+        self.offsets.insert("1.0", "\n".join(scan.obs))
+
+        # directions -> anchored facings (rot values are used exactly as the
+        # conf recorded them; only the offset pattern rotates). Any subset is
+        # representable now that facings are checkboxes.
+        facing_arg = scan.facing_arg()
+        self.set_facings(scan.facing_indices(), view_rel=False)
+
+        self._log(f"\n[conf] loaded {os.path.basename(path)}\n")
+        self._log(f"  algorithm  {scan.algorithm}\n")
+        self._log(f"  centre     ({cx}, {cz})  radius {radius}\n")
+        x_lo, x_hi = scan.x_range
+        z_lo, z_hi = scan.z_range
+        self._log(f"  from box   x {x_lo}..{x_hi}, z {z_lo}..{z_hi}, y {y_lo}..{y_hi}\n")
+        self._log(f"  facing     {facing_arg}  (directions {scan.directions})\n")
+        side_note = f", {scan.n_side} side -> modeff=2" if scan.n_side else ""
+        self._log(f"  obs        {len(scan.obs)}{side_note}\n")
+        for note in scan.ignored:
+            self._log(f"  ignored    {note}\n")
+        # anything that changes what the search actually does, in bold red
+        for note in scan.warnings:
+            self._log(f"  WARNING    {note}\n", "warn")
+        self._update_rec_obs()
+
     def _parse_args(self):
         cx     = self.cx.get().strip()
         cz     = self.cz.get().strip()
@@ -545,6 +688,8 @@ class App(tk.Tk):
             raise ValueError("Need at least 1 observation.")
 
         _, facing, view_rel, _ = self._facing_selection()
+        if not facing:
+            raise ValueError("Tick at least one Direction facing to search.")
         if view_rel:
             # Every view-relative facing (single or all4) requires mod=4 obs
             # (or mod=16 mask obs), since rot shifts in lockstep with the view.
@@ -680,7 +825,7 @@ class App(tk.Tk):
                         self.after(0, lambda l=line: self._log(l, tag="match"))
                     elif match_count == MATCH_DISPLAY_LIMIT:
                         self.after(0, lambda: self._log(
-                            f"[Display capped at {MATCH_DISPLAY_LIMIT} matches - see matches.txt for full results]\n",
+                            f"[Display capped at {MATCH_DISPLAY_LIMIT} matches -- see matches.txt for full results]\n",
                             tag="err"))
                     match_count += 1
 

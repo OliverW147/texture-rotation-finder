@@ -20,6 +20,7 @@ second** on an RTX 4060.
 | `texture_finder_gui.py` | Tkinter GUI. Enter observations, pick CPU or GPU, run. |
 | `tex_match.c` | CPU matcher (multithreaded). |
 | `tex_match_gpu.cu` | CUDA matcher. Field + sieve; ~150 G candidates/s on a 4060. |
+| `tex_conf.py` | Loads CoordsFinder `.conf` scan files into the GUI. |
 | `build_tex.bat` | Builds both binaries on Windows. |
 
 ## Build
@@ -53,6 +54,12 @@ python texture_finder_gui.py
 ```
 
 Needs Python 3 with Tkinter (included in the standard python.org installer).
+
+**Loading a `.conf`.** If you already have observations saved in a CoordsFinder
+`.conf` file, `Load .conf...` (or `Load latest .conf`, which takes the newest one
+in the script folder) fills in the centre, radius, Y range, facings and
+observations. Nothing runs until you press Run, so the values can be checked
+first. Settings with no equivalent here are skipped and listed in the log.
 
 ## Observations
 
@@ -132,6 +139,13 @@ goes up, just sub-linearly.
 
 Targets the 26.1.2 block-variant tables and hash. Earlier versions used the
 same coordinate hash but different blockstate variant lists.
+
+## Credits
+
+The `.conf` scan file format read by `tex_conf.py` comes from
+[CoordsFinder](https://github.com/ALaggyDev/CoordsFinder) by ALaggyDev.
+Thanks to that project for the format, which lets their `.conf` files be
+loaded here directly.
 
 ## Licence
 
