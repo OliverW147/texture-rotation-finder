@@ -111,7 +111,8 @@ The search is split into two kernels:
 
 1. **Field kernel** - computes the rotation value once per absolute cell and
    packs it into a bitfield (16-32 cells per 64-bit word). Each cell is hashed
-   exactly once, which is the information-theoretic minimum.
+   exactly once, I could not achieve any form of useful lazy-hashing with
+   small enough overhead to be worth implementing.
 2. **Sieve kernel** - matches candidates as shifted 64-bit AND masks over that
    field. One `xor`/`and`/`fold` tests **32 candidates at once**, and a word
    drops out as soon as every candidate in it is dead.
